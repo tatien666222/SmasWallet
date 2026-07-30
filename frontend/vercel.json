@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    {
+      "source": "/arc-rpc/(.*)",
+      "destination": "https://rpc.testnet.arc.io/$1"
+    },
+    {
+      "source": "/arc-rpc",
+      "destination": "https://rpc.testnet.arc.io/"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
