@@ -23,7 +23,7 @@ if (typeof window !== 'undefined' && window.fetch) {
     }
 
     if (urlStr.includes('rpc.testnet.arc.network') || urlStr.includes('rpc.testnet.arc.io')) {
-      const fixedUrl = import.meta.env?.DEV ? '/arc-rpc' : 'https://rpc.testnet.arc.io';
+      const fixedUrl = '/arc-rpc';
       if (typeof input === 'string') {
         input = fixedUrl;
       } else if (input instanceof URL) {

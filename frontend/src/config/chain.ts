@@ -2,7 +2,7 @@ import { defineChain } from 'viem';
 
 export const ARC_TESTNET_CHAIN_ID = 5042002;
 export const ARC_TESTNET_HEX_CHAIN_ID = `0x${ARC_TESTNET_CHAIN_ID.toString(16)}`; // '0x4cef52'
-export const ARC_TESTNET_RPC_URL = import.meta.env?.DEV ? '/arc-rpc' : 'https://rpc.testnet.arc.io';
+export const ARC_TESTNET_RPC_URL = '/arc-rpc';
 
 export const arcTestnet = defineChain({
   id: ARC_TESTNET_CHAIN_ID,
@@ -39,7 +39,7 @@ export const CHAIN_HEX_IDS: Record<string, string> = {
 export async function switchNetwork(provider: any, chain: string) {
   const chainIdHex = CHAIN_HEX_IDS[chain];
   if (!provider || !chainIdHex) return;
-  
+
   try {
     await provider.request({
       method: 'wallet_switchEthereumChain',
