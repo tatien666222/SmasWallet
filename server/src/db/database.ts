@@ -1,85 +1,98 @@
-import fs from 'fs';
-import path from 'path';
-import Database from 'better-sqlite3';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { Transaction } from '../types/index.js';
 
-const dbPath = process.env.DATABASE_PATH || './data/arc-wallet.db';
+/* ------------------------------------------------------------------ */
+/*  Supabase client                                                    */
+/* ------------------------------------------------------------------ */
 
-// Ensure data folder exists
-const dbDir = path.dirname(dbPath);
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
+const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY || '';
+
+let supabase: SupabaseClient | null = null;
+
+if (supabaseUrl && supabaseKey) {
+  supabase = createClient(supabaseUrl, supabaseKey);
+  console.log('[Database] Supabase client initialized');
+} else {
+  console.warn('[Database] SUPABASE_URL or SUPABASE_SERVICE_KEY not set — using in-memory fallback');
 }
 
-let sqliteDb: any = null;
-try {
-  sqliteDb = new Database(dbPath);
-  sqliteDb.pragma('journal_mode = WAL');
+/* ------------------------------------------------------------------ */
+/*  Row ↔ Domain mapping helpers                                       */
+/* ------------------------------------------------------------------ */
 
-  // Initialize tables
-  sqliteDb.exec(`
-    CREATE TABLE IF NOT EXISTS transactions (
-      id TEXT PRIMARY KEY,
-      wallet_address TEXT NOT NULL,
-      type TEXT NOT NULL,
-      source_chain TEXT NOT NULL,
-      dest_chain TEXT,
-      token_in TEXT NOT NULL,
-      token_out TEXT,
-      amount_in TEXT NOT NULL,
-      amount_out TEXT,
-      status TEXT NOT NULL,
-      tx_hash TEXT NOT NULL,
-      tx_hash_dest TEXT,
-      explorer_url TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_tx_wallet ON transactions(wallet_address);
-
-    CREATE TABLE IF NOT EXISTS nonces (
-      wallet_address TEXT PRIMARY KEY,
-      nonce TEXT NOT NULL,
-      expires_at INTEGER NOT NULL
-    );
-  `);
-  console.log(`[Database] SQLite database initialized successfully at ${dbPath}`);
-} catch (err) {
-  console.warn('[Database] SQLite initialization warning:', err);
+interface TransactionRow {
+  id: string;
+  wallet_address: string;
+  type: string;
+  source_chain: string;
+  dest_chain: string | null;
+  token_in: string;
+  token_out: string | null;
+  amount_in: string;
+  amount_out: string | null;
+  fee_amount: string | null;
+  status: string;
+  tx_hash: string;
+  tx_hash_dest: string | null;
+  explorer_url: string | null;
+  created_at: string;
+  updated_at: string;
 }
+
+function rowToTransaction(r: TransactionRow): Transaction {
+  return {
+    id: r.id,
+    walletAddress: r.wallet_address,
+    type: r.type as Transaction['type'],
+    sourceChain: r.source_chain,
+    destChain: r.dest_chain ?? '',
+    tokenIn: r.token_in,
+    tokenOut: r.token_out ?? '',
+    amountIn: r.amount_in,
+    amountOut: r.amount_out ?? undefined,
+    feeAmount: r.fee_amount ?? undefined,
+    status: r.status as Transaction['status'],
+    txHash: r.tx_hash,
+    txHashDest: r.tx_hash_dest ?? undefined,
+    explorerUrl: r.explorer_url ?? undefined,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  DatabaseStore — Supabase-backed with in-memory fallback            */
+/* ------------------------------------------------------------------ */
 
 class DatabaseStore {
   private inMemoryTxs: Map<string, Transaction> = new Map();
   private inMemoryNonces: Map<string, { nonce: string; expiresAt: number }> = new Map();
 
-  public insertTransaction(tx: Transaction): Transaction {
-    if (sqliteDb) {
+  /* -------- Transactions -------- */
+
+  public async insertTransaction(tx: Transaction): Promise<Transaction> {
+    if (supabase) {
       try {
-        const stmt = sqliteDb.prepare(`
-          INSERT INTO transactions (
-            id, wallet_address, type, source_chain, dest_chain,
-            token_in, token_out, amount_in, amount_out, status,
-            tx_hash, tx_hash_dest, explorer_url, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        stmt.run(
-          tx.id,
-          tx.walletAddress.toLowerCase(),
-          tx.type,
-          tx.sourceChain,
-          tx.destChain || null,
-          tx.tokenIn,
-          tx.tokenOut || null,
-          tx.amountIn,
-          tx.amountOut || null,
-          tx.status,
-          tx.txHash,
-          tx.txHashDest || null,
-          tx.explorerUrl || null,
-          tx.createdAt,
-          tx.updatedAt
-        );
+        const { error } = await supabase.from('transactions').insert({
+          id: tx.id,
+          wallet_address: tx.walletAddress.toLowerCase(),
+          type: tx.type,
+          source_chain: tx.sourceChain,
+          dest_chain: tx.destChain || null,
+          token_in: tx.tokenIn,
+          token_out: tx.tokenOut || null,
+          amount_in: tx.amountIn,
+          amount_out: tx.amountOut || null,
+          fee_amount: tx.feeAmount || null,
+          status: tx.status,
+          tx_hash: tx.txHash,
+          tx_hash_dest: tx.txHashDest || null,
+          explorer_url: tx.explorerUrl || null,
+          created_at: tx.createdAt,
+          updated_at: tx.updatedAt,
+        });
+        if (error) console.warn('[Database] Insert error:', error.message);
       } catch (err) {
         console.warn('[Database] Insert error:', err);
       }
@@ -88,82 +101,64 @@ class DatabaseStore {
     return tx;
   }
 
-  public getTransactionsByWallet(
+  public async getTransactionsByWallet(
     walletAddress: string,
     limit: number = 20,
     offset: number = 0
-  ): { data: Transaction[]; total: number } {
+  ): Promise<{ data: Transaction[]; total: number }> {
     const normalizedWallet = walletAddress.toLowerCase();
-    if (sqliteDb) {
+
+    if (supabase) {
       try {
-        const countStmt = sqliteDb.prepare('SELECT COUNT(*) as total FROM transactions WHERE wallet_address = ?');
-        const countRow = countStmt.get(normalizedWallet);
-        const total = countRow?.total || 0;
+        // Get total count
+        const { count, error: countError } = await supabase
+          .from('transactions')
+          .select('*', { count: 'exact', head: true })
+          .eq('wallet_address', normalizedWallet);
 
-        const dataStmt = sqliteDb.prepare(`
-          SELECT * FROM transactions
-          WHERE wallet_address = ?
-          ORDER BY created_at DESC
-          LIMIT ? OFFSET ?
-        `);
-        const rows = dataStmt.all(normalizedWallet, limit, offset);
+        if (countError) throw countError;
 
-        const data: Transaction[] = rows.map((r: any) => ({
-          id: r.id,
-          walletAddress: r.wallet_address,
-          type: r.type,
-          sourceChain: r.source_chain,
-          destChain: r.dest_chain,
-          tokenIn: r.token_in,
-          tokenOut: r.token_out,
-          amountIn: r.amount_in,
-          amountOut: r.amount_out,
-          status: r.status,
-          txHash: r.tx_hash,
-          txHashDest: r.tx_hash_dest,
-          explorerUrl: r.explorer_url,
-          createdAt: r.created_at,
-          updatedAt: r.updated_at,
-        }));
-        return { data, total };
+        // Get paginated data
+        const { data: rows, error: dataError } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('wallet_address', normalizedWallet)
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1);
+
+        if (dataError) throw dataError;
+
+        return {
+          data: (rows || []).map((r: any) => rowToTransaction(r)),
+          total: count || 0,
+        };
       } catch (err) {
         console.warn('[Database] Fetch error:', err);
       }
     }
 
+    // In-memory fallback
     const all = Array.from(this.inMemoryTxs.values())
       .filter(tx => tx.walletAddress.toLowerCase() === normalizedWallet)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-    const total = all.length;
-    const data = all.slice(offset, offset + limit);
-    return { data, total };
+    return { data: all.slice(offset, offset + limit), total: all.length };
   }
 
-  public getTransactionById(id: string): Transaction | undefined {
-    if (sqliteDb) {
+  public async getTransactionById(id: string): Promise<Transaction | undefined> {
+    if (supabase) {
       try {
-        const stmt = sqliteDb.prepare('SELECT * FROM transactions WHERE id = ?');
-        const r = stmt.get(id);
-        if (r) {
-          return {
-            id: r.id,
-            walletAddress: r.wallet_address,
-            type: r.type,
-            sourceChain: r.source_chain,
-            destChain: r.dest_chain,
-            tokenIn: r.token_in,
-            tokenOut: r.token_out,
-            amountIn: r.amount_in,
-            amountOut: r.amount_out,
-            status: r.status,
-            txHash: r.tx_hash,
-            txHashDest: r.tx_hash_dest,
-            explorerUrl: r.explorer_url,
-            createdAt: r.created_at,
-            updatedAt: r.updated_at,
-          };
+        const { data, error } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('id', id)
+          .single();
+
+        if (error) {
+          if (error.code !== 'PGRST116') console.warn('[Database] GetById error:', error.message);
+          return this.inMemoryTxs.get(id);
         }
+        if (data) return rowToTransaction(data);
       } catch (err) {
         console.warn('[Database] GetById error:', err);
       }
@@ -171,27 +166,41 @@ class DatabaseStore {
     return this.inMemoryTxs.get(id);
   }
 
-  public updateTransactionStatus(
+  public async updateTransactionStatus(
     id: string,
     status: Transaction['status'],
     txHashDest?: string,
     amountOut?: string
-  ): Transaction | undefined {
+  ): Promise<Transaction | undefined> {
     const updatedAt = new Date().toISOString();
-    if (sqliteDb) {
+
+    if (supabase) {
       try {
-        const stmt = sqliteDb.prepare(`
-          UPDATE transactions
-          SET status = ?, tx_hash_dest = COALESCE(?, tx_hash_dest), amount_out = COALESCE(?, amount_out), updated_at = ?
-          WHERE id = ?
-        `);
-        stmt.run(status, txHashDest || null, amountOut || null, updatedAt, id);
+        const updateFields: Record<string, any> = { status, updated_at: updatedAt };
+        if (txHashDest) updateFields.tx_hash_dest = txHashDest;
+        if (amountOut) updateFields.amount_out = amountOut;
+
+        const { data, error } = await supabase
+          .from('transactions')
+          .update(updateFields)
+          .eq('id', id)
+          .select()
+          .single();
+
+        if (error) {
+          console.warn('[Database] Update error:', error.message);
+        } else if (data) {
+          const tx = rowToTransaction(data);
+          this.inMemoryTxs.set(id, tx);
+          return tx;
+        }
       } catch (err) {
         console.warn('[Database] Update error:', err);
       }
     }
 
-    const tx = this.getTransactionById(id);
+    // In-memory fallback
+    const tx = this.inMemoryTxs.get(id);
     if (!tx) return undefined;
 
     const updated: Transaction = {
@@ -205,58 +214,80 @@ class DatabaseStore {
     return updated;
   }
 
-  public setNonce(walletAddress: string, nonce: string, ttlSeconds: number = 300): void {
+  /* -------- Nonces -------- */
+
+  public async setNonce(walletAddress: string, nonce: string, ttlSeconds: number = 300): Promise<void> {
     const expiresAt = Date.now() + ttlSeconds * 1000;
-    if (sqliteDb) {
+    const normalizedWallet = walletAddress.toLowerCase();
+
+    if (supabase) {
       try {
-        const stmt = sqliteDb.prepare(`
-          INSERT INTO nonces (wallet_address, nonce, expires_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(wallet_address) DO UPDATE SET nonce = excluded.nonce, expires_at = excluded.expires_at
-        `);
-        stmt.run(walletAddress.toLowerCase(), nonce, expiresAt);
+        const { error } = await supabase.from('nonces').upsert(
+          {
+            wallet_address: normalizedWallet,
+            nonce,
+            expires_at: expiresAt,
+          },
+          { onConflict: 'wallet_address' }
+        );
+        if (error) console.warn('[Database] Nonce insert error:', error.message);
       } catch (err) {
         console.warn('[Database] Nonce insert error:', err);
       }
     }
-    this.inMemoryNonces.set(walletAddress.toLowerCase(), { nonce, expiresAt });
+    this.inMemoryNonces.set(normalizedWallet, { nonce, expiresAt });
   }
 
-  public getNonce(walletAddress: string): string | undefined {
-    if (sqliteDb) {
+  public async getNonce(walletAddress: string): Promise<string | undefined> {
+    const normalizedWallet = walletAddress.toLowerCase();
+
+    if (supabase) {
       try {
-        const stmt = sqliteDb.prepare('SELECT nonce, expires_at FROM nonces WHERE wallet_address = ?');
-        const row = stmt.get(walletAddress.toLowerCase());
-        if (row) {
-          if (Date.now() > row.expires_at) {
-            this.clearNonce(walletAddress);
+        const { data, error } = await supabase
+          .from('nonces')
+          .select('nonce, expires_at')
+          .eq('wallet_address', normalizedWallet)
+          .single();
+
+        if (error) {
+          if (error.code !== 'PGRST116') console.warn('[Database] Nonce get error:', error.message);
+          // Fall through to in-memory
+        } else if (data) {
+          if (Date.now() > data.expires_at) {
+            await this.clearNonce(walletAddress);
             return undefined;
           }
-          return row.nonce;
+          return data.nonce;
         }
       } catch (err) {
         console.warn('[Database] Nonce get error:', err);
       }
     }
-    const entry = this.inMemoryNonces.get(walletAddress.toLowerCase());
+
+    const entry = this.inMemoryNonces.get(normalizedWallet);
     if (!entry) return undefined;
     if (Date.now() > entry.expiresAt) {
-      this.inMemoryNonces.delete(walletAddress.toLowerCase());
+      this.inMemoryNonces.delete(normalizedWallet);
       return undefined;
     }
     return entry.nonce;
   }
 
-  public clearNonce(walletAddress: string): void {
-    if (sqliteDb) {
+  public async clearNonce(walletAddress: string): Promise<void> {
+    const normalizedWallet = walletAddress.toLowerCase();
+
+    if (supabase) {
       try {
-        const stmt = sqliteDb.prepare('DELETE FROM nonces WHERE wallet_address = ?');
-        stmt.run(walletAddress.toLowerCase());
+        const { error } = await supabase
+          .from('nonces')
+          .delete()
+          .eq('wallet_address', normalizedWallet);
+        if (error) console.warn('[Database] Nonce clear error:', error.message);
       } catch (err) {
         console.warn('[Database] Nonce clear error:', err);
       }
     }
-    this.inMemoryNonces.delete(walletAddress.toLowerCase());
+    this.inMemoryNonces.delete(normalizedWallet);
   }
 }
 

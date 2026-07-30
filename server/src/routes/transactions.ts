@@ -5,7 +5,7 @@ import { validateCreateTransaction, isValidEthereumAddress } from '../middleware
 export const transactionRouter = Router();
 
 // GET /api/transactions?wallet=0x1234&limit=20&offset=0
-transactionRouter.get('/', (req, res) => {
+transactionRouter.get('/', async (req, res) => {
   const wallet = req.query.wallet as string;
   const limit = parseInt((req.query.limit as string) || '20', 10);
   const offset = parseInt((req.query.offset as string) || '0', 10);
@@ -20,18 +20,18 @@ transactionRouter.get('/', (req, res) => {
     return;
   }
 
-  const result = transactionService.getTransactionsByWallet(wallet, limit, offset);
+  const result = await transactionService.getTransactionsByWallet(wallet, limit, offset);
   res.status(200).json(result);
 });
 
 // POST /api/transactions
-transactionRouter.post('/', validateCreateTransaction, (req, res) => {
-  const tx = transactionService.createTransaction(req.body);
+transactionRouter.post('/', validateCreateTransaction, async (req, res) => {
+  const tx = await transactionService.createTransaction(req.body);
   res.status(201).json(tx);
 });
 
 // PATCH /api/transactions/:id/status
-transactionRouter.patch('/:id/status', (req, res) => {
+transactionRouter.patch('/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status, txHashDest, amountOut } = req.body;
 
@@ -45,7 +45,7 @@ transactionRouter.patch('/:id/status', (req, res) => {
     return;
   }
 
-  const updated = transactionService.updateTransactionStatus(id, {
+  const updated = await transactionService.updateTransactionStatus(id, {
     status,
     txHashDest,
     amountOut,

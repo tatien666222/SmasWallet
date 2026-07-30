@@ -1,14 +1,13 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import dotenv from 'dotenv';
+import 'dotenv/config';
 import { transactionRouter } from './routes/transactions.js';
 import { priceRouter } from './routes/prices.js';
 import { authRouter } from './routes/auth.js';
 import { swapRouter } from './routes/swap.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
-dotenv.config();
 
 export const app = express();
 
@@ -16,7 +15,9 @@ export const app = express();
 app.use(helmet());
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || '*',
+    origin: process.env.CORS_ORIGIN
+      ? process.env.CORS_ORIGIN.split(',').map(o => o.trim())
+      : '*',
     methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
   })
 );

@@ -5,7 +5,7 @@ import { isValidEthereumAddress } from '../middleware/validator.js';
 export const authRouter = Router();
 
 // GET /api/auth/nonce?wallet=0x1234
-authRouter.get('/nonce', (req, res) => {
+authRouter.get('/nonce', async (req, res) => {
   const wallet = req.query.wallet as string;
 
   if (!wallet || !isValidEthereumAddress(wallet)) {
@@ -18,12 +18,12 @@ authRouter.get('/nonce', (req, res) => {
     return;
   }
 
-  const response = authService.generateNonce(wallet);
+  const response = await authService.generateNonce(wallet);
   res.status(200).json(response);
 });
 
 // POST /api/auth/verify
-authRouter.post('/verify', (req, res) => {
+authRouter.post('/verify', async (req, res) => {
   const { walletAddress, signature, nonce } = req.body;
 
   if (!walletAddress || !isValidEthereumAddress(walletAddress) || !signature || !nonce) {
@@ -37,7 +37,7 @@ authRouter.post('/verify', (req, res) => {
   }
 
   try {
-    const result = authService.verifySignature(walletAddress, signature, nonce);
+    const result = await authService.verifySignature(walletAddress, signature, nonce);
     res.status(200).json(result);
   } catch (err) {
     res.status(401).json({

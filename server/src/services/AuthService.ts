@@ -3,10 +3,10 @@ import { db } from '../db/database.js';
 import type { AuthNonceResponse, AuthVerifyResponse } from '../types/index.js';
 
 export class AuthService {
-  public generateNonce(walletAddress: string): AuthNonceResponse {
+  public async generateNonce(walletAddress: string): Promise<AuthNonceResponse> {
     const nonce = `Sign this message to authenticate with Arc Wallet: ${uuidv4()}`;
     const ttl = 300; // 5 minutes
-    db.setNonce(walletAddress, nonce, ttl);
+    await db.setNonce(walletAddress, nonce, ttl);
 
     return {
       nonce,
@@ -15,12 +15,12 @@ export class AuthService {
     };
   }
 
-  public verifySignature(
+  public async verifySignature(
     walletAddress: string,
     signature: string,
     nonce: string
-  ): AuthVerifyResponse {
-    const storedNonce = db.getNonce(walletAddress);
+  ): Promise<AuthVerifyResponse> {
+    const storedNonce = await db.getNonce(walletAddress);
     if (!storedNonce || storedNonce !== nonce) {
       throw new Error('INVALID_NONCE: Nonce is invalid or expired.');
     }
@@ -30,7 +30,7 @@ export class AuthService {
     // if (recoveredAddress.toLowerCase() !== walletAddress.toLowerCase()) throw new Error('INVALID_SIGNATURE');
 
     // Clear nonce after single use
-    db.clearNonce(walletAddress);
+    await db.clearNonce(walletAddress);
 
     // Mock JWT generation for lightweight support service
     const mockJwt = `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.${Buffer.from(

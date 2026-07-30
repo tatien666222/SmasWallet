@@ -13,7 +13,7 @@
     "express": "^4.21.2",
     "cors": "^2.8.5",
     "helmet": "^8.0.0",
-    "better-sqlite3": "^11.8.1",
+    "@supabase/supabase-js": "^2.49.1",
     "uuid": "^11.0.5",
     "dotenv": "^16.4.7",
     "@circle-fin/app-kit": "latest"
@@ -21,7 +21,6 @@
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/cors": "^2.8.17",
-    "@types/better-sqlite3": "^7.6.12",
     "@types/uuid": "^10.0.0",
     "@types/node": "^22.10.1",
     "@types/supertest": "^6.0.2",

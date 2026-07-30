@@ -8,7 +8,7 @@ import type {
 } from '../types/index.js';
 
 export class TransactionService {
-  public createTransaction(dto: CreateTransactionDto): Transaction {
+  public async createTransaction(dto: CreateTransactionDto): Promise<Transaction> {
     const now = new Date().toISOString();
     const tx: Transaction = {
       id: uuidv4(),
@@ -32,12 +32,12 @@ export class TransactionService {
     return db.insertTransaction(tx);
   }
 
-  public getTransactionsByWallet(
+  public async getTransactionsByWallet(
     walletAddress: string,
     limit: number = 20,
     offset: number = 0
-  ): PaginatedResponse<Transaction> {
-    const { data, total } = db.getTransactionsByWallet(walletAddress, limit, offset);
+  ): Promise<PaginatedResponse<Transaction>> {
+    const { data, total } = await db.getTransactionsByWallet(walletAddress, limit, offset);
     return {
       data,
       total,
@@ -46,14 +46,14 @@ export class TransactionService {
     };
   }
 
-  public updateTransactionStatus(
+  public async updateTransactionStatus(
     id: string,
     dto: UpdateTransactionStatusDto
-  ): Transaction | undefined {
+  ): Promise<Transaction | undefined> {
     return db.updateTransactionStatus(id, dto.status, dto.txHashDest, dto.amountOut);
   }
 
-  public getTransactionById(id: string): Transaction | undefined {
+  public async getTransactionById(id: string): Promise<Transaction | undefined> {
     return db.getTransactionById(id);
   }
 }
